@@ -26,7 +26,7 @@ class Config:
     
     # --- Logic & Restrictions ---
     # Default minimum sessions required for non-sudo users
-    DEFAULT_MIN_SESSIONS = int(os.environ.get("DEFAULT_MIN_SESSIONS", 3))
+    DEFAULT_MIN_SESSIONS = int(os.environ.get("DEFAULT_MIN_SESSIONS", 1))
     
     # Supported command prefixes for the bot
     PREFIX = ["/", "!", "."]
