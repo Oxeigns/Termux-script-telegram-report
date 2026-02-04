@@ -9,24 +9,24 @@ logger = logging.getLogger(__name__)
 
 async def send_single_report(client: Client, chat_id: int | str, msg_id: int | None, reason_code: str, description: str):
     """
-    ULTIMATE REPORT ENGINE v3.1: 
-    Fixed 'Peer Id Invalid' and 'Initializing' hang issues.
+    ULTIMATE REPORT ENGINE v3.2: 
+    Fixed 'Initializing' hang and 'Peer ID Invalid' errors.
     """
     try:
-        # 1. ROBUST PEER RESOLUTION
+        # 1. ROBUST PEER SYNC 
+        # Accounts must 'see' the chat before they can report it.
         try:
-            # Try direct resolution first
             peer = await client.resolve_peer(chat_id)
         except (PeerIdInvalid, ChannelInvalid, KeyError, ValueError):
-            # Fallback: Force session to fetch chat metadata
             try:
+                # Fallback: Force server fetch to sync Peer ID into session storage
                 chat = await client.get_chat(chat_id)
                 peer = await client.resolve_peer(chat.id)
             except Exception as e:
-                logger.error(f"Worker {client.name} - Peer Resolution Failed: {e}")
+                logger.error(f"Worker {client.name} - Resolution Failed: {e}")
                 return False
 
-        # 2. REASON MAPPING
+        # 2. REASON MAPPING (MTProto Schema)
         reasons = {
             '1': types.InputReportReasonSpam(),
             '2': types.InputReportReasonViolence(),
@@ -39,8 +39,9 @@ async def send_single_report(client: Client, chat_id: int | str, msg_id: int | N
         }
         selected_reason = reasons.get(str(reason_code), types.InputReportReasonOther())
 
-        # 3. EXECUTION
+        # 3. EXECUTION LOGIC
         if msg_id:
+            # Report specific Message (t.me/chat/id)
             await client.invoke(
                 functions.messages.Report(
                     peer=peer,
@@ -50,6 +51,7 @@ async def send_single_report(client: Client, chat_id: int | str, msg_id: int | N
                 )
             )
         else:
+            # Report Entire Chat/Profile
             await client.invoke(
                 functions.account.ReportPeer(
                     peer=peer,
@@ -57,17 +59,25 @@ async def send_single_report(client: Client, chat_id: int | str, msg_id: int | N
                     message=description
                 )
             )
+        
+        logger.info(f"Worker {client.name} - Success")
         return True
 
     except FloodWait as e:
-        # SKIP if flood is too long (> 2 minutes) to keep reporting fast
+        # CRITICAL: If Telegram asks to wait > 120s, skip this worker to keep reporting fast
         if e.value > 120:
-            logger.warning(f"Worker {client.name} skipped: {e.value}s FloodWait")
+            logger.warning(f"Worker {client.name} - Skipping (FloodWait: {e.value}s)")
             return False
+            
+        logger.warning(f"Worker {client.name} - Throttling ({e.value}s)")
         await asyncio.sleep(e.value)
+        # Final retry after sleep
         return await send_single_report(client, chat_id, msg_id, reason_code, description)
 
-    except RPCError:
+    except RPCError as e:
+        logger.debug(f"Worker {client.name} - API Error: {e.message}")
         return False
-    except Exception:
+
+    except Exception as e:
+        logger.error(f"Worker {client.name} - Internal Error: {e}")
         return False
